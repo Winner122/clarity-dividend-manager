@@ -8,16 +8,18 @@ A blockchain-based solution for managing automated dividend payments to sharehol
 - Tracking of dividend claims and preventing double claims
 - Transparent view of share ownership and dividend history
 - Share vesting schedules with linear vesting
+- Multi-token dividend support with token whitelist
 
 ## Features
 
 - Share token management
-- Dividend token management
+- Multi-token dividend management
 - Automated dividend calculations
 - Claim tracking system
 - Owner-controlled share issuance
 - Period-based dividend declarations
 - Linear vesting schedules for share distribution
+- Token whitelist for supported dividend tokens
 
 ## Security Features
 
@@ -26,10 +28,11 @@ A blockchain-based solution for managing automated dividend payments to sharehol
 - Balance verification
 - Zero-amount protection
 - Vesting schedule enforcement
+- Token whitelist validation
 
 ## Vesting Schedule System
 
-The contract now supports linear vesting schedules for share distribution:
+The contract supports linear vesting schedules for share distribution:
 
 - Create vesting schedules with customizable parameters:
   - Total amount of shares
@@ -39,3 +42,13 @@ The contract now supports linear vesting schedules for share distribution:
 - Claim mechanism for vested shares
 - Vesting schedule querying
 - Protection against early claims
+
+## Multi-Token Dividend System
+
+The contract now supports dividend distribution in multiple tokens:
+
+- Whitelist system for supported dividend tokens
+- Per-token dividend declarations
+- Separate tracking of dividend claims for each token
+- Individual dividend amount calculations per token
+- Token validation for all dividend operations
