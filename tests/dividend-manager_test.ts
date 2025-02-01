@@ -67,6 +67,47 @@ Clarinet.test({
 });
 
 Clarinet.test({
+    name: "Test vesting schedule creation and claim",
+    async fn(chain: Chain, accounts: Map<string, Account>) {
+        const deployer = accounts.get('deployer')!;
+        const wallet1 = accounts.get('wallet_1')!;
+        
+        // Create vesting schedule
+        let vestingBlock = chain.mineBlock([
+            Tx.contractCall('dividend-manager', 'create-vesting-schedule', [
+                types.principal(wallet1.address),
+                types.uint(1000), // total amount
+                types.uint(10), // start block
+                types.uint(100) // duration
+            ], deployer.address)
+        ]);
+        
+        vestingBlock.receipts[0].result.expectOk();
+
+        // Advance chain and claim vested shares
+        chain.mineEmptyBlockUntil(60); // 50% vesting point
+        
+        let claimBlock = chain.mineBlock([
+            Tx.contractCall('dividend-manager', 'claim-vested-shares', 
+                [], 
+                wallet1.address
+            )
+        ]);
+        
+        claimBlock.receipts[0].result.expectOk();
+        
+        // Verify vesting schedule
+        let scheduleBlock = chain.mineBlock([
+            Tx.contractCall('dividend-manager', 'get-vesting-schedule', [
+                types.principal(wallet1.address)
+            ], deployer.address)
+        ]);
+        
+        scheduleBlock.receipts[0].result.expectOk();
+    }
+});
+
+Clarinet.test({
     name: "Test error conditions",
     async fn(chain: Chain, accounts: Map<string, Account>) {
         const deployer = accounts.get('deployer')!;
