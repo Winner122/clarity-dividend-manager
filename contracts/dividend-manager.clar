@@ -11,164 +11,95 @@
 (define-constant err-invalid-vesting (err u104))
 (define-constant err-not-vested (err u105))
 (define-constant err-invalid-token (err u106))
+(define-constant err-deadline-passed (err u107))
+(define-constant err-contract-paused (err u108))
+(define-constant err-batch-too-large (err u109))
+(define-constant err-invalid-amount (err u110))
+(define-constant max-supply u1000000000)
+(define-constant max-batch-size u20)
+(define-constant max-dividend-rate u1000000) ;; 100% in basis points
 
 ;; Data vars
 (define-data-var total-shares uint u0)
 (define-data-var dividend-per-share uint u0)
 (define-data-var total-dividends uint u0)
+(define-data-var contract-paused bool false)
+(define-data-var claim-deadline uint u0)
+(define-data-var total-distributions uint u0)
 
-;; Data maps
-(define-map claimed-dividends {shareholder: principal, period: uint, token: (string-ascii 32)} bool)
-(define-map dividend-periods {period: uint, token: (string-ascii 32)} uint)
-(define-map shareholder-info principal {last-claim-period: uint})
-(define-map vesting-schedules 
-  principal 
-  {
-    total-amount: uint,
-    vesting-start: uint,
-    vesting-duration: uint,
-    claimed-amount: uint
-  }
-)
+;; Maps for tracking distributions
+(define-map distribution-info
+  { period: uint }
+  { total-amount: uint, claimed-amount: uint })
 
-;; Supported dividend tokens
-(define-map supported-tokens (string-ascii 32) bool)
+;; Emergency pause
+(define-public (set-pause-state (paused bool))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (var-set contract-paused paused)
+    (ok true)))
 
-;; Add supported token
-(define-public (add-supported-token (token (string-ascii 32)))
-  (if (is-eq tx-sender contract-owner)
-    (begin
-      (map-set supported-tokens token true)
-      (ok true)
-    )
-    err-owner-only
-  )
-)
+;; Check not paused
+(define-private (assert-not-paused)
+  (asserts! (not (var-get contract-paused)) err-contract-paused))
 
-;; Issue new shares - only owner
-(define-public (issue-shares (amount uint) (recipient principal))
-    (if (and (is-eq tx-sender contract-owner) (> amount u0))
-        (begin 
-            (try! (ft-mint? shares amount recipient))
-            (var-set total-shares (+ (var-get total-shares) amount))
-            (ok true)
-        )
-        err-owner-only
-    )
-)
+;; Set claim deadline
+(define-public (set-claim-deadline (deadline uint))
+  (begin
+    (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+    (var-set claim-deadline deadline)
+    (ok true)))
 
-;; Create vesting schedule for shares
-(define-public (create-vesting-schedule 
-  (recipient principal) 
-  (amount uint)
-  (start-block uint)
-  (duration uint)
-)
-  (if (and 
-    (is-eq tx-sender contract-owner)
-    (> amount u0)
-    (>= duration u1)
-  )
-    (begin
-      (try! (ft-mint? shares amount contract-owner))
-      (map-set vesting-schedules recipient {
-        total-amount: amount,
-        vesting-start: start-block,
-        vesting-duration: duration,
-        claimed-amount: u0
-      })
-      (ok true)
-    )
-    err-owner-only
-  )
-)
-
-;; Claim vested shares
-(define-public (claim-vested-shares)
+;; Preview dividend claim amount
+(define-read-only (get-claimable-amount (period uint) (token (string-ascii 32)))
   (let (
-    (vesting (unwrap! (map-get? vesting-schedules tx-sender) err-invalid-vesting))
-    (vested-amount (get-vested-amount tx-sender block-height))
-    (claimable (- vested-amount (get claimed-amount vesting)))
+    (shares-owned (ft-get-balance shares tx-sender))
+    (claimed (default-to false (map-get? claimed-dividends {shareholder: tx-sender, period: period, token: token})))
+    (period-amount (unwrap! (map-get? dividend-periods {period: period, token: token}) err-invalid-token))
   )
-    (asserts! (> claimable u0) err-not-vested)
-    (begin
-      (try! (ft-transfer? shares claimable contract-owner tx-sender))
-      (map-set vesting-schedules tx-sender (merge vesting {claimed-amount: vested-amount}))
-      (var-set total-shares (+ (var-get total-shares) claimable))
-      (ok claimable)
-    )
-  )
-)
+    (if claimed
+      (ok u0)
+      (ok (* shares-owned (/ period-amount (var-get total-shares)))))))
 
-;; Calculate vested amount
-(define-read-only (get-vested-amount (holder principal) (current-block uint))
-  (let (
-    (vesting (unwrap! (map-get? vesting-schedules holder) u0))
-    (elapsed (- current-block (get vesting-start vesting)))
-  )
-    (if (>= elapsed (get vesting-duration vesting))
-      (get total-amount vesting)
-      (/ (* (get total-amount vesting) elapsed) (get vesting-duration vesting))
-    )
-  )
-)
-
-;; Declare new dividend period and deposit dividends
-(define-public (declare-dividends (amount uint) (period uint) (token (string-ascii 32)))
-    (let ((is-supported (default-to false (map-get? supported-tokens token))))
-      (if (and (is-eq tx-sender contract-owner) (> amount u0) is-supported)
-          (begin
-              (map-set dividend-periods {period: period, token: token} amount)
-              (var-set dividend-per-share (/ amount (var-get total-shares)))
-              (var-set total-dividends (+ (var-get total-dividends) amount))
-              (ok true)
-          )
-          (if (not is-supported) 
-              err-invalid-token
-              err-owner-only
-          )
-      )
-    )
-)
-
-;; Claim dividends for a specific period and token
+;; Enhanced claim-dividends with additional safety checks
 (define-public (claim-dividends (period uint) (token (string-ascii 32)))
+  (begin
+    (assert-not-paused)
+    (asserts! (< block-height (var-get claim-deadline)) err-deadline-passed)
     (let (
-        (shares-owned (ft-get-balance shares tx-sender))
-        (claimed (default-to false (map-get? claimed-dividends {shareholder: tx-sender, period: period, token: token})))
-        (period-amount (unwrap! (map-get? dividend-periods {period: period, token: token}) err-invalid-token))
-        (dividend-amount (* shares-owned (/ period-amount (var-get total-shares))))
+      (shares-owned (ft-get-balance shares tx-sender))
+      (claimed (default-to false (map-get? claimed-dividends {shareholder: tx-sender, period: period, token: token})))
+      (period-amount (unwrap! (map-get? dividend-periods {period: period, token: token}) err-invalid-token))
+      (dividend-amount (* shares-owned (/ period-amount (var-get total-shares))))
     )
-        (asserts! (not claimed) err-already-claimed)
-        (asserts! (> dividend-amount u0) err-zero-amount)
-        (begin
-            (map-set claimed-dividends {shareholder: tx-sender, period: period, token: token} true)
-            (ok dividend-amount)
-        )
-    )
-)
+      (asserts! (not claimed) err-already-claimed)
+      (asserts! (> dividend-amount u0) err-zero-amount)
+      (asserts! (<= dividend-amount max-dividend-rate) err-invalid-amount)
+      (begin
+        (map-set claimed-dividends {shareholder: tx-sender, period: period, token: token} true)
+        (try! (update-distribution-info period dividend-amount))
+        (ok dividend-amount)))))
 
-;; Read-only functions
-(define-read-only (get-shares-balance (shareholder principal))
-    (ok (ft-get-balance shares shareholder))
-)
+;; Update distribution tracking
+(define-private (update-distribution-info (period uint) (amount uint))
+  (let ((current-info (default-to {total-amount: u0, claimed-amount: u0}
+                      (map-get? distribution-info {period: period}))))
+    (map-set distribution-info
+      {period: period}
+      {
+        total-amount: (get total-amount current-info),
+        claimed-amount: (+ (get claimed-amount current-info) amount)
+      })
+    (ok true)))
 
-(define-read-only (get-dividend-amount (period uint) (token (string-ascii 32)))
-    (ok (default-to u0 (map-get? dividend-periods {period: period, token: token})))
-)
+;; Enhanced batch claim dividends with size limit
+(define-public (batch-claim-dividends (periods (list 10 uint)) (token (string-ascii 32)))
+  (begin
+    (assert-not-paused)
+    (asserts! (<= (len periods) max-batch-size) err-batch-too-large)
+    (fold claim-dividends-fold periods (ok true))))
 
-(define-read-only (get-total-shares)
-    (ok (var-get total-shares))
-)
-
-(define-read-only (is-dividend-claimed (shareholder principal) (period uint) (token (string-ascii 32)))
-    (ok (default-to false (map-get? claimed-dividends {shareholder: shareholder, period: period, token: token})))
-)
-
-(define-read-only (get-vesting-schedule (holder principal))
-    (ok (map-get? vesting-schedules holder))
-)
-
-(define-read-only (is-token-supported (token (string-ascii 32)))
-    (ok (default-to false (map-get? supported-tokens token)))
-)
+(define-private (claim-dividends-fold (period uint) (previous-result (response bool uint)))
+  (match previous-result
+    success (claim-dividends period token)
+    error error))
