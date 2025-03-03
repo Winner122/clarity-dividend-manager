@@ -4,6 +4,12 @@
 
 ## New Features
 
+### Enhanced Security and Optimization
+- Maximum batch size limits for gas optimization
+- Dividend rate validation
+- Distribution tracking and monitoring
+- Claim amount preview functionality
+
 ### Batch Processing
 - Support for claiming multiple dividend periods in a single transaction
 - Efficient processing of dividend claims
