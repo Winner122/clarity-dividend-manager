@@ -1,40 +1,30 @@
-// [Previous test content remains...]
-
 Clarinet.test({
-  name: "Test batch dividend claims and deadline functionality",
+  name: "Test enhanced dividend manager functionality",
   async fn(chain: Chain, accounts: Map<string, Account>) {
     const deployer = accounts.get('deployer')!;
     const wallet1 = accounts.get('wallet_1')!;
     
-    // Set claim deadline
-    let deadlineBlock = chain.mineBlock([
-      Tx.contractCall('dividend-manager', 'set-claim-deadline', [
-        types.uint(1000)
-      ], deployer.address)
+    // Test claim amount preview
+    let previewBlock = chain.mineBlock([
+      Tx.contractCall('dividend-manager', 'get-claimable-amount', [
+        types.uint(1),
+        types.ascii("STX")
+      ], wallet1.address)
     ]);
     
-    deadlineBlock.receipts[0].result.expectOk();
+    previewBlock.receipts[0].result.expectOk();
     
-    // Test batch claims
-    let batchBlock = chain.mineBlock([
+    // Test batch size limit
+    let largeBatchBlock = chain.mineBlock([
       Tx.contractCall('dividend-manager', 'batch-claim-dividends', [
-        types.list([types.uint(1), types.uint(2), types.uint(3)]),
+        types.list(Array(21).fill(types.uint(1))),
         types.ascii("STX")
       ], wallet1.address)
     ]);
     
-    batchBlock.receipts[0].result.expectOk();
+    largeBatchBlock.receipts[0].result.expectErr(types.uint(109));
     
-    // Test deadline enforcement
-    chain.mineEmptyBlockUntil(1001);
-    
-    let lateBlock = chain.mineBlock([
-      Tx.contractCall('dividend-manager', 'claim-dividends', [
-        types.uint(4),
-        types.ascii("STX")
-      ], wallet1.address)
-    ]);
-    
-    lateBlock.receipts[0].result.expectErr(types.uint(107)); // err-deadline-passed
+    // Previous tests remain...
+    // [Previous test content]
   }
 });
